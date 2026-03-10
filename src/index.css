@@ -1,0 +1,52 @@
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --void: #07070E;
+  --text-primary: hsla(38, 30%, 85%, 0.9);
+  --text-muted: hsla(38, 20%, 65%, 0.5);
+  --text-ghost: hsla(38, 15%, 55%, 0.3);
+  --timer-track: hsla(38, 15%, 50%, 0.12);
+  --timer-fill: hsla(38, 30%, 75%, 0.5);
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  background: var(--void);
+  color: var(--text-primary);
+  font-family: 'Cormorant Garamond', serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.scroll-container {
+  height: 100dvh;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.scroll-container::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll-container {
+  scrollbar-width: none;
+}
+
+.escape-section {
+  height: 100dvh;
+  scroll-snap-align: start;
+  position: relative;
+  overflow: hidden;
+}
+
+canvas {
+  touch-action: pan-y;
+  display: block;
+}
