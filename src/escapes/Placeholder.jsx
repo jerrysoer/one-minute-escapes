@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react';
 import { useCanvas } from '../hooks/useCanvas';
 import { useTimer } from '../hooks/useTimer';
 
-export default function Placeholder({ isVisible, title, subtitle }) {
+export default function Placeholder({ isVisible, title }) {
   const timerRef = useRef(null);
   const { tick, restart, getState } = useTimer();
   timerRef.current = { tick, restart, getState };
@@ -27,11 +27,6 @@ export default function Placeholder({ isVisible, title, subtitle }) {
       ctx.textAlign = 'center';
       ctx.letterSpacing = '0.08em';
       ctx.fillText(title || 'Escape', w / 2, h / 2 - 20);
-
-      // Subtitle
-      ctx.fillStyle = 'hsla(38, 20%, 65%, 0.5)';
-      ctx.font = 'italic 300 16px "Cormorant Garamond", serif';
-      ctx.fillText(subtitle || '', w / 2, h / 2 + 20);
 
       // Timer
       ctx.fillStyle = 'hsla(38, 15%, 55%, 0.3)';

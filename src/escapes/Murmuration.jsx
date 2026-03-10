@@ -2,6 +2,8 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useCanvas } from '../hooks/useCanvas';
 import { useTimer } from '../hooks/useTimer';
 import { lerp, clamp, easeInOutCubic, seededRandom, TAU } from '../utils/math';
+import { applyPixelGlitch } from '../utils/glitch';
+import { pulse } from '../utils/haptic';
 
 // ── Constants ────────────────────────────────────────────────────────
 const NUM_BOIDS = 420;
@@ -100,12 +102,14 @@ function initBoids(boids, w, h, rng) {
 }
 
 // ── Component ────────────────────────────────────────────────────────
-export default function Murmuration({ isVisible, title, subtitle, palette, onTimerUpdate }) {
+export default function Murmuration({ isVisible, title, palette, onTimerUpdate, onCycleChange }) {
   const boidsRef = useRef(null);
   const mouseRef = useRef({ x: -9999, y: -9999, active: false });
   const canvasElRef = useRef(null);
   const firstCycleRef = useRef(true);
   const lastCycleRef = useRef(-1);
+  const _mRef = useRef({ pts: [], lastT: 0, active: false, timer: 0, targets: null });
+  const _hRef = useRef(0); // haptic throttle
 
   const { tick, restart } = useTimer();
 
@@ -127,6 +131,10 @@ export default function Murmuration({ isVisible, title, subtitle, palette, onTim
       mouseRef.current.x = clientX - rect.left;
       mouseRef.current.y = clientY - rect.top;
       mouseRef.current.active = true;
+      const now = performance.now();
+      const m = _mRef.current;
+      m.pts.push({ x: mouseRef.current.x, y: mouseRef.current.y, t: now });
+      if (m.pts.length > 35) m.pts.splice(0, m.pts.length - 35);
     }
 
     function onMouseMove(e) {
@@ -171,6 +179,7 @@ export default function Murmuration({ isVisible, title, subtitle, palette, onTim
     // Re-init on new cycle
     if (cycle !== lastCycleRef.current && phase !== 'resetting') {
       lastCycleRef.current = cycle;
+      if (onCycleChange) onCycleChange(cycle);
       if (cycle > 0) {
         firstCycleRef.current = false;
         const rng = seededRandom(cycle * 7919 + 1);
@@ -184,11 +193,15 @@ export default function Murmuration({ isVisible, title, subtitle, palette, onTim
 
     // Skip simulation during resetting phase (just draw veil)
     if (phase === 'resetting') {
-      // Crossfade veil: fade to black then back
+      // Pixel glitch
+      const canvas = canvasElRef.current;
+      if (canvas) applyPixelGlitch(ctx, canvas, w, h, resetProgress);
+
+      // Crossfade veil
       const veilAlpha = resetProgress < 0.5
         ? easeInOutCubic(resetProgress * 2)
         : easeInOutCubic(1 - (resetProgress - 0.5) * 2);
-      ctx.fillStyle = `rgba(7, 7, 14, ${veilAlpha})`;
+      ctx.fillStyle = `rgba(10, 9, 7, ${veilAlpha})`;
       ctx.fillRect(0, 0, w, h);
       return;
     }
@@ -313,6 +326,91 @@ export default function Murmuration({ isVisible, title, subtitle, palette, onTim
       if (py > h - margin) boids.forceY[i] -= (py - (h - margin)) / margin * edgeForce;
     }
 
+    // Haptic: pulse when flock passes near touch (throttled to every 2s)
+    _hRef.current -= dt;
+    if (mouseRef.current.active && _hRef.current <= 0) {
+      const mx = mouseRef.current.x, my = mouseRef.current.y;
+      let near = 0;
+      for (let i = 0; i < NUM_BOIDS; i += 4) {
+        const dx = boids.posX[i] - mx, dy = boids.posY[i] - my;
+        if (dx * dx + dy * dy < 2500) near++;
+      }
+      if (near > 8) { pulse(); _hRef.current = 2; }
+    }
+
+    // ── _m check ───────────────────────────────────────────────
+    const _m = _mRef.current;
+    if (_m.active) {
+      _m.timer += dt;
+      if (_m.timer > 0.5) {
+        _m.active = false;
+        _m.timer = 0;
+        _m.targets = null;
+      } else if (_m.targets) {
+        const k = 800;
+        const damp = 12;
+        for (let i = 0; i < NUM_BOIDS; i++) {
+          const tx = _m.targets[i * 2];
+          const ty = _m.targets[i * 2 + 1];
+          boids.forceX[i] = (tx - boids.posX[i]) * k - boids.velX[i] * damp;
+          boids.forceY[i] = (ty - boids.posY[i]) * k - boids.velY[i] * damp;
+        }
+      }
+    } else {
+      const now = performance.now();
+      if (now - _m.lastT > 30000 && _m.pts.length >= 20) {
+        const recent = _m.pts.filter(p => now - p.t < 1000);
+        if (recent.length >= 15) {
+          let cx = 0, cy = 0;
+          for (let i = 0; i < recent.length; i++) { cx += recent[i].x; cy += recent[i].y; }
+          cx /= recent.length; cy /= recent.length;
+          let sweep = 0;
+          for (let i = 1; i < recent.length; i++) {
+            const a0 = Math.atan2(recent[i-1].y - cy, recent[i-1].x - cx);
+            const a1 = Math.atan2(recent[i].y - cy, recent[i].x - cx);
+            let da = a1 - a0;
+            if (da > Math.PI) da -= TAU;
+            if (da < -Math.PI) da += TAU;
+            sweep += da;
+          }
+          if (Math.abs(sweep) > 4 * Math.PI) {
+            _m.active = true;
+            _m.timer = 0;
+            _m.lastT = now;
+            // generate target coords
+            const hw = w / 2, hh = h / 2;
+            const tgt = new Float32Array(NUM_BOIDS * 2);
+            const nEye = Math.floor(NUM_BOIDS * 0.15);
+            const nArc = NUM_BOIDS - nEye * 2;
+            let idx = 0;
+            // left eye
+            for (let i = 0; i < nEye; i++) {
+              const a = TAU * i / nEye;
+              const r = Math.min(w, h) * 0.03 * Math.sqrt(((i % 5) + 1) / 5);
+              tgt[idx++] = hw - w * 0.12 + Math.cos(a) * r;
+              tgt[idx++] = hh - h * 0.1 + Math.sin(a) * r;
+            }
+            // right eye
+            for (let i = 0; i < nEye; i++) {
+              const a = TAU * i / nEye;
+              const r = Math.min(w, h) * 0.03 * Math.sqrt(((i % 5) + 1) / 5);
+              tgt[idx++] = hw + w * 0.12 + Math.cos(a) * r;
+              tgt[idx++] = hh - h * 0.1 + Math.sin(a) * r;
+            }
+            // smile arc
+            for (let i = 0; i < nArc; i++) {
+              const t = i / (nArc - 1);
+              const angle = Math.PI * 0.15 + t * Math.PI * 0.7;
+              const rx = w * 0.17, ry = h * 0.13;
+              tgt[idx++] = hw + Math.cos(angle) * rx;
+              tgt[idx++] = hh + h * 0.02 + Math.sin(angle) * ry;
+            }
+            _m.targets = tgt;
+          }
+        }
+      }
+    }
+
     // ── Integrate velocities and positions ───────────────────────
     const currentMaxSpeed = MAX_SPEED * speedMult;
     const currentMinSpeed = MIN_SPEED;
@@ -387,36 +485,7 @@ export default function Murmuration({ isVisible, title, subtitle, palette, onTim
       }
     }
 
-    // ── Title overlay (first cycle, intro phase only) ────────────
-    if (firstCycleRef.current && phase === 'intro') {
-      // Fade in over first 0.8s, hold, fade out over last 0.6s
-      let titleAlpha = 1;
-      if (elapsed < 0.8) {
-        titleAlpha = easeInOutCubic(elapsed / 0.8);
-      } else if (elapsed > INTRO_END - 0.6) {
-        titleAlpha = easeInOutCubic((INTRO_END - elapsed) / 0.6);
-      }
-      titleAlpha = clamp(titleAlpha, 0, 1);
-
-      // Title
-      ctx.save();
-      ctx.globalAlpha = titleAlpha * 0.9;
-      ctx.fillStyle = 'hsla(38, 30%, 85%, 1)';
-      ctx.font = 'italic 300 42px "Cormorant Garamond", serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.letterSpacing = '0.08em';
-      ctx.fillText(title || 'Murmuration', w / 2, h / 2 - 14);
-
-      // Subtitle
-      ctx.globalAlpha = titleAlpha * 0.5;
-      ctx.fillStyle = 'hsla(38, 20%, 65%, 1)';
-      ctx.font = 'italic 300 16px "Cormorant Garamond", serif';
-      ctx.letterSpacing = '0.04em';
-      ctx.fillText(subtitle || '', w / 2, h / 2 + 24);
-      ctx.restore();
-    }
-  }, [tick, title, subtitle]);
+  }, [tick, title]);
 
   const canvasRef = useCanvas(draw, isVisible);
 

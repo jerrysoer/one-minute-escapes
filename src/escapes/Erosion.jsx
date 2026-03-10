@@ -3,6 +3,7 @@ import { useCanvas } from '../hooks/useCanvas';
 import { useTimer } from '../hooks/useTimer';
 import { lerp, clamp, seededRandom, mapRange } from '../utils/math';
 import { createNoise2D, fbm } from '../utils/noise';
+import { applyPixelGlitch } from '../utils/glitch';
 
 // ---------- constants ----------
 const GRID = 256;
@@ -117,7 +118,7 @@ function spawnParticle(rng, windAngle) {
 }
 
 // ---------- main component ----------
-export default function Erosion({ isVisible, title, subtitle, palette, onTimerUpdate }) {
+export default function Erosion({ isVisible, title, palette, onTimerUpdate, onCycleChange }) {
   const { tick, restart } = useTimer();
   const stateRef = useRef(null);
 
@@ -126,7 +127,8 @@ export default function Erosion({ isVisible, title, subtitle, palette, onTimerUp
 
   // Track mouse/touch for wind direction
   const pointerRef = useRef({ x: 0.5, y: 0.5, active: false });
-  const firstCycleShownRef = useRef(false);
+  const prevCycleRef = useRef(-1);
+  const _sRef = useRef({ lastMove: 0, pos: { x: 0.5, y: 0.5 }, bloom: null, cooldown: 999 });
 
   // Initialize simulation
   const initSim = useCallback((seed) => {
@@ -165,7 +167,7 @@ export default function Erosion({ isVisible, title, subtitle, palette, onTimerUp
   useEffect(() => {
     if (isVisible) {
       restart();
-      firstCycleShownRef.current = false;
+      prevCycleRef.current = -1;
       simRef.current = initSim(Date.now());
     }
   }, [isVisible, restart, initSim]);
@@ -178,6 +180,9 @@ export default function Erosion({ isVisible, title, subtitle, palette, onTimerUp
       pointerRef.current.x = ex / window.innerWidth;
       pointerRef.current.y = ey / window.innerHeight;
       pointerRef.current.active = true;
+      _sRef.current.lastMove = performance.now() / 1000;
+      _sRef.current.pos.x = pointerRef.current.x;
+      _sRef.current.pos.y = pointerRef.current.y;
     };
 
     const onMouse = (e) => handleMove(e.clientX, e.clientY);
@@ -206,6 +211,12 @@ export default function Erosion({ isVisible, title, subtitle, palette, onTimerUp
     const sim = simRef.current;
     if (!sim) return;
 
+    // Cycle change detection
+    if (state.cycle !== prevCycleRef.current) {
+      prevCycleRef.current = state.cycle;
+      if (onCycleChange) onCycleChange(state.cycle);
+    }
+
     // ---- Handle resetting: rebuild terrain ----
     if (state.phase === 'resetting') {
       // Draw existing terrain
@@ -219,11 +230,15 @@ export default function Erosion({ isVisible, title, subtitle, palette, onTimerUp
       const oy = (h - scale) / 2;
       ctx.drawImage(sim.offscreen, ox, oy, scale, scale);
 
+      // Pixel glitch effect
+      const canvas = canvasRef.current;
+      if (canvas) applyPixelGlitch(ctx, canvas, w, h, state.resetProgress);
+
       // Black veil crossfade
       const veilAlpha = state.resetProgress < 0.5
         ? state.resetProgress * 2
         : 2 - state.resetProgress * 2;
-      ctx.fillStyle = `rgba(7, 7, 14, ${clamp(veilAlpha, 0, 1)})`;
+      ctx.fillStyle = `rgba(14, 10, 7, ${clamp(veilAlpha, 0, 1)})`;
       ctx.fillRect(0, 0, w, h);
 
       // Rebuild at midpoint
@@ -386,44 +401,55 @@ export default function Erosion({ isVisible, title, subtitle, palette, onTimerUp
     }
     ctx.globalAlpha = 1;
 
-    // ---- Title overlay (first cycle, intro phase only) ----
-    if (state.phase === 'intro' && !firstCycleShownRef.current) {
-      const introT = clamp(state.elapsed / 2.5, 0, 1);
-      // Fade in then out
-      let titleAlpha;
-      if (introT < 0.3) {
-        titleAlpha = introT / 0.3;
-      } else if (introT < 0.7) {
-        titleAlpha = 1;
+    // _s overlay pass
+    const _s = _sRef.current;
+    const _now = performance.now() / 1000;
+    _s.cooldown += dt;
+    const _still = _now - _s.lastMove;
+    if (_still > 15 && _s.cooldown > 30 && !_s.bloom && pointerRef.current.active) {
+      _s.bloom = { x: _s.pos.x, y: _s.pos.y, life: 0, maxLife: 1.0, sz: 8 };
+      _s.lastMove = _now;
+      _s.cooldown = 0;
+    }
+    if (_s.bloom) {
+      const b = _s.bloom;
+      b.life += dt;
+      if (b.life > b.maxLife) {
+        _s.bloom = null;
       } else {
-        titleAlpha = 1 - (introT - 0.7) / 0.3;
+        const bx = ox + b.x * scale;
+        const by = oy + b.y * scale;
+        let t = b.life / b.maxLife;
+        let sz, a;
+        if (t < 0.3) { sz = (t / 0.3) * b.sz; a = t / 0.3; }
+        else if (t < 0.5) { sz = b.sz; a = 1; }
+        else { sz = b.sz * (1 - (t - 0.5) / 0.5); a = 1 - (t - 0.5) / 0.5; }
+        a = clamp(a, 0, 1);
+        sz = Math.max(sz, 0);
+        // stem
+        ctx.strokeStyle = `hsla(120,40%,45%,${a * 0.8})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.lineTo(bx, by + sz * 1.2);
+        ctx.stroke();
+        // petals
+        for (let pi = 0; pi < 5; pi++) {
+          const pa = (pi / 5) * Math.PI * 2 - Math.PI / 2;
+          const pr = sz * 0.45;
+          ctx.fillStyle = `hsla(340,50%,70%,${a * 0.7})`;
+          ctx.beginPath();
+          ctx.arc(bx + Math.cos(pa) * pr, by + Math.sin(pa) * pr, sz * 0.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // center
+        ctx.fillStyle = `hsla(45,70%,70%,${a * 0.9})`;
+        ctx.beginPath();
+        ctx.arc(bx, by, sz * 0.15, 0, Math.PI * 2);
+        ctx.fill();
       }
-      titleAlpha = clamp(titleAlpha, 0, 1);
-
-      ctx.save();
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
-      // Title
-      ctx.fillStyle = `hsla(38, 30%, 85%, ${titleAlpha * 0.9})`;
-      ctx.font = 'italic 300 42px "Cormorant Garamond", serif';
-      ctx.letterSpacing = '0.08em';
-      ctx.fillText(title || 'Erosion', w / 2, h / 2 - 16);
-
-      // Subtitle
-      ctx.fillStyle = `hsla(28, 25%, 65%, ${titleAlpha * 0.5})`;
-      ctx.font = 'italic 300 16px "Cormorant Garamond", serif';
-      ctx.letterSpacing = '0.06em';
-      ctx.fillText(subtitle || 'guide the wind \u00b7 carve the stone', w / 2, h / 2 + 24);
-
-      ctx.restore();
     }
-
-    // Mark first cycle title as shown once we leave intro
-    if (state.phase !== 'intro' && state.cycle === 0) {
-      firstCycleShownRef.current = true;
-    }
-  }, [tick, title, subtitle, initSim]);
+  }, [tick, title, initSim, onCycleChange]);
 
   const canvasRef = useCanvas(draw, isVisible);
 
