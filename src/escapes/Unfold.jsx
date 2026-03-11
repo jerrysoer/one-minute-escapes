@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import {
   Scene, OrthographicCamera, WebGLRenderer,
   MeshPhongMaterial, DirectionalLight, AmbientLight, Mesh,
@@ -103,18 +103,17 @@ const SHAPE_RADIUS  = 2.2;   // world-unit scale factor
 // Component
 // ──────────────────────────────────────────────────────
 
-export default function Unfold({ isVisible, title, subtitle, palette, onTimerUpdate }) {
+export default function Unfold({ isVisible, title, palette, onTimerUpdate, onCycleChange }) {
   const containerRef = useRef(null);
   const threeRef     = useRef(null);
   const rafRef       = useRef(null);
   const prevTimeRef  = useRef(0);
   const mouseRef     = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
+  const prevCycleRef = useRef(-1);
 
   const { tick, restart } = useTimer();
   const timerRef = useRef({ tick, restart });
   timerRef.current = { tick, restart };
-
-  const [showTitle, setShowTitle] = useState(true);
 
   // ── Mouse / touch tracking ──────────────────────────
   useEffect(() => {
@@ -200,7 +199,7 @@ export default function Unfold({ isVisible, title, subtitle, palette, onTimerUpd
     const renderer = new WebGLRenderer({ alpha: true, antialias: true });
     renderer.setSize(w, h);
     renderer.setPixelRatio(dpr);
-    renderer.setClearColor(0x07070E, 1);
+    renderer.setClearColor(0x0E0D07, 1);
     el.insertBefore(renderer.domElement, el.firstChild); // before title overlay
 
     // --- Lights ---
@@ -301,11 +300,10 @@ export default function Unfold({ isVisible, title, subtitle, palette, onTimerUpd
     const positions = posAttr.array;
     const numShapes = shapeTargets.length;
 
-    // -- Title visibility --
-    if (phase === 'intro') {
-      setShowTitle(elapsed < 2.0);
-    } else if (phase === 'running' || phase === 'ending') {
-      setShowTitle(false);
+    // -- Cycle change detection --
+    if (cycle !== prevCycleRef.current) {
+      prevCycleRef.current = cycle;
+      if (onCycleChange) onCycleChange(cycle);
     }
 
     // -- Reset crossfade veil --
@@ -403,7 +401,7 @@ export default function Unfold({ isVisible, title, subtitle, palette, onTimerUpd
     }
 
     restart();
-    setShowTitle(true);
+    prevCycleRef.current = -1;
     initThree();
     prevTimeRef.current = performance.now();
 
@@ -442,55 +440,10 @@ export default function Unfold({ isVisible, title, subtitle, palette, onTimerUpd
         position: 'absolute',
         top: 0,
         left: 0,
-        background: '#07070E',
+        background: '#0E0D07',
       }}
     >
       {/* Three.js canvas is inserted as first child */}
-
-      {/* Title overlay (first cycle intro only) */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          pointerEvents: 'none',
-          zIndex: 10,
-          opacity: showTitle ? 1 : 0,
-          transition: 'opacity 1.2s ease',
-        }}
-      >
-        <h2
-          style={{
-            fontFamily: "'Cormorant Garamond', serif",
-            fontStyle: 'italic',
-            fontWeight: 300,
-            fontSize: 42,
-            letterSpacing: '0.08em',
-            color: palette?.accent || 'hsla(38, 25%, 85%, 0.8)',
-            margin: 0,
-            textShadow: '0 0 40px rgba(0,0,0,0.8)',
-          }}
-        >
-          {title}
-        </h2>
-        <p
-          style={{
-            fontFamily: "'Cormorant Garamond', serif",
-            fontStyle: 'italic',
-            fontWeight: 300,
-            fontSize: 16,
-            letterSpacing: '0.06em',
-            color: 'hsla(38, 20%, 65%, 0.5)',
-            margin: '12px 0 0',
-            textShadow: '0 0 30px rgba(0,0,0,0.8)',
-          }}
-        >
-          {subtitle}
-        </p>
-      </div>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useCanvas } from '../hooks/useCanvas';
 import { useTimer } from '../hooks/useTimer';
 import { lerp, clamp, seededRandom, dist, TAU } from '../utils/math';
+import { applyPixelGlitch } from '../utils/glitch';
 
 const MAX_LETTERS = 220;
 const GRAVITY_ACCEL = 60;
@@ -52,12 +53,14 @@ function createLetter(rng, w, h, char) {
   };
 }
 
-export default function Letters({ isVisible, title, subtitle, onTimerUpdate }) {
+export default function Letters({ isVisible, title, onTimerUpdate, onCycleChange }) {
   const stateRef = useRef(null);
   const sizeRef = useRef({ w: 0, h: 0 });
+  const prevCycleRef = useRef(-1);
   const { tick, restart } = useTimer();
   const lastWordCheck = useRef(0);
   const formedWords = useRef([]);
+  const _kRef = useRef({ buf: '', items: [], lastFull: 0, _t: null });
 
   const initState = useCallback((w, h, seed) => {
     const rng = seededRandom(seed);
@@ -84,6 +87,35 @@ export default function Letters({ isVisible, title, subtitle, onTimerUpdate }) {
       if (w > 0) initState(w, h, Date.now());
     }
   }, [isVisible, restart, initState]);
+
+  useEffect(() => {
+    if (!isVisible) return;
+    const _k = _kRef.current;
+    const _onKey = (e) => {
+      const c = e.key;
+      if (c.length !== 1 || !/[a-zA-Z]/.test(c)) return;
+      const { w, h } = sizeRef.current;
+      if (w === 0) return;
+      const now = performance.now() / 1000;
+      _k.buf += c.toLowerCase();
+      if (_k._t) clearTimeout(_k._t);
+      _k._t = setTimeout(() => { _k.buf = ''; }, 5000);
+      const canFull = (now - _k.lastFull) > 30;
+      if (canFull && _k.buf.length >= 3) _k.lastFull = now;
+      _k.items.push({
+        char: c.toLowerCase(),
+        x: w * 0.15 + Math.random() * w * 0.7,
+        y: h * 0.08 + Math.random() * h * 0.38,
+        life: 0, maxLife: 2,
+        sz: 28, g: 1, rot: (Math.random() - 0.5) * 0.3
+      });
+    };
+    window.addEventListener('keydown', _onKey);
+    return () => {
+      window.removeEventListener('keydown', _onKey);
+      if (_k._t) clearTimeout(_k._t);
+    };
+  }, [isVisible]);
 
   const handleResize = useCallback((w, h) => {
     sizeRef.current = { w, h };
@@ -118,6 +150,10 @@ export default function Letters({ isVisible, title, subtitle, onTimerUpdate }) {
       const timer = tick(dt);
       const { progress, phase, cycle, resetProgress, elapsed } = timer;
       if (onTimerUpdate) onTimerUpdate(progress, elapsed);
+      if (prevCycleRef.current !== cycle) {
+        prevCycleRef.current = cycle;
+        if (onCycleChange) onCycleChange(cycle);
+      }
       const state = stateRef.current;
       if (!state) return;
 
@@ -232,30 +268,34 @@ export default function Letters({ isVisible, title, subtitle, onTimerUpdate }) {
         }
       }
 
-      // Title overlay
-      if (cycle === 0 && phase === 'intro') {
-        const titleAlpha = clamp(1 - (elapsed - 1.5), 0, 1);
-        if (titleAlpha > 0) {
-          ctx.save();
-          ctx.globalAlpha = titleAlpha;
-          ctx.shadowBlur = 0;
-          ctx.fillStyle = 'hsla(38, 30%, 85%, 0.9)';
-          ctx.font = 'italic 300 42px "Cormorant Garamond", serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(title, w / 2, h / 2 - 20);
-          ctx.fillStyle = 'hsla(38, 20%, 65%, 0.5)';
-          ctx.font = 'italic 300 16px "Cormorant Garamond", serif';
-          ctx.fillText(subtitle, w / 2, h / 2 + 20);
-          ctx.restore();
-        }
+      // _k overlay
+      const _ki = _kRef.current.items;
+      for (let qi = _ki.length - 1; qi >= 0; qi--) {
+        const p = _ki[qi];
+        p.life += dt;
+        if (p.life > p.maxLife) { _ki.splice(qi, 1); continue; }
+        const a = 1 - (p.life / p.maxLife);
+        p.y += 15 * dt;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.shadowColor = `hsla(38, 60%, 80%, ${a * 0.7})`;
+        ctx.shadowBlur = 14 * a;
+        ctx.fillStyle = `hsla(38, 60%, 80%, ${a})`;
+        ctx.font = `300 ${p.sz}px "Cormorant Garamond", serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(p.char, 0, 0);
+        ctx.restore();
       }
 
       // Crossfade veil
       if (phase === 'resetting') {
+        if (canvasRef.current) applyPixelGlitch(ctx, canvasRef.current, w, h, resetProgress);
         const veilAlpha = resetProgress < 0.5
           ? resetProgress * 2
           : 2 - resetProgress * 2;
-        ctx.fillStyle = `rgba(7, 7, 14, ${veilAlpha * 0.9})`;
+        ctx.fillStyle = `rgba(10, 10, 10, ${veilAlpha * 0.9})`;
         ctx.fillRect(0, 0, w, h);
       }
     },

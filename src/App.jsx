@@ -4,7 +4,7 @@ import { useVisibility } from './hooks/useVisibility';
 import TimerArc from './components/TimerArc';
 import Placeholder from './escapes/Placeholder';
 
-function EscapeSection({ config, index, activeIndex, onBecomeVisible, onTimerUpdate, scrollContainerRef }) {
+function EscapeSection({ config, index, activeIndex, onBecomeVisible, onTimerUpdate, onCycleChange, scrollContainerRef }) {
   const [sectionRef, isVisible] = useVisibility(0.5);
 
   useEffect(() => {
@@ -21,18 +21,19 @@ function EscapeSection({ config, index, activeIndex, onBecomeVisible, onTimerUpd
       className="escape-section"
       id={`escape-${config.id}`}
       data-escape={config.id}
+      style={{ background: config.voidTint }}
     >
       <Suspense
         fallback={
-          <Placeholder isVisible={isVisible} title={config.title} subtitle={config.subtitle} />
+          <Placeholder isVisible={isVisible} title={config.title} />
         }
       >
         <Component
           isVisible={isVisible}
           title={config.title}
-          subtitle={config.subtitle}
           palette={config.palette}
           onTimerUpdate={onTimerUpdate}
+          onCycleChange={onCycleChange}
         />
       </Suspense>
     </section>
@@ -44,8 +45,12 @@ export default function App() {
   const [viewedEscapes, setViewedEscapes] = useState(new Set([0]));
   const [hasScrolled, setHasScrolled] = useState(false);
   const [timerDisplay, setTimerDisplay] = useState({ progress: 0, elapsed: 0 });
+  const [cycleCounts, setCycleCounts] = useState({});
+  const [showDelayedTitle, setShowDelayedTitle] = useState(false);
+  const titleShownForRef = useRef(new Set());
   const scrollRef = useRef(null);
   const timerRef = useRef({ progress: 0, elapsed: 0 });
+  const titleTimeoutRef = useRef(null);
 
   // Low-frequency timer UI update (4Hz)
   useEffect(() => {
@@ -60,8 +65,31 @@ export default function App() {
     timerRef.current = { progress, elapsed };
   }, []);
 
+  const handleCycleChange = useCallback((cycle, escapeIndex) => {
+    // First cycle just completed — show delayed title
+    if (cycle === 1) {
+      const escapeId = escapes[escapeIndex]?.id;
+      if (escapeId && !titleShownForRef.current.has(escapeId)) {
+        titleShownForRef.current.add(escapeId);
+        setShowDelayedTitle(true);
+        if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
+        titleTimeoutRef.current = setTimeout(() => {
+          setShowDelayedTitle(false);
+        }, 3000);
+      }
+    }
+    setCycleCounts(prev => ({
+      ...prev,
+      [escapeIndex]: cycle,
+    }));
+  }, []);
+
   const handleBecomeVisible = useCallback((index) => {
     setActiveIndex(index);
+    setShowDelayedTitle(false);
+    if (titleTimeoutRef.current) clearTimeout(titleTimeoutRef.current);
+    // Reset title tracking when revisiting an escape
+    titleShownForRef.current.delete(escapes[index]?.id);
     setViewedEscapes((prev) => {
       const next = new Set(prev);
       next.add(index);
@@ -73,13 +101,14 @@ export default function App() {
     if (!hasScrolled) setHasScrolled(true);
   }, [hasScrolled]);
 
-  // Deep link: parse #escape-id on mount
+  // Deep link: parse ?escape=id or #id on mount
   useEffect(() => {
-    const hash = window.location.hash.replace('#', '');
-    if (hash) {
-      const idx = escapes.findIndex((e) => e.id === hash);
+    const params = new URLSearchParams(window.location.search);
+    const escapeId = params.get('escape') || window.location.hash.replace('#', '');
+    if (escapeId) {
+      const idx = escapes.findIndex((e) => e.id === escapeId);
       if (idx > 0) {
-        const el = document.getElementById(`escape-${hash}`);
+        const el = document.getElementById(`escape-${escapeId}`);
         if (el) {
           setTimeout(() => el.scrollIntoView({ behavior: 'instant' }), 100);
         }
@@ -93,8 +122,16 @@ export default function App() {
     if (el) el.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
+  const activeConfig = escapes[activeIndex];
+  const currentCycle = cycleCounts[activeIndex] || 0;
+
   return (
-    <div className="scroll-container" ref={scrollRef} onScroll={handleScroll}>
+    <div
+      className="scroll-container"
+      ref={scrollRef}
+      onScroll={handleScroll}
+      style={{ cursor: activeConfig?.cursor || 'default' }}
+    >
       {escapes.map((config, i) => (
         <EscapeSection
           key={config.id}
@@ -103,9 +140,95 @@ export default function App() {
           activeIndex={activeIndex}
           onBecomeVisible={handleBecomeVisible}
           onTimerUpdate={handleTimerUpdate}
+          onCycleChange={(cycle) => handleCycleChange(cycle, i)}
           scrollContainerRef={scrollRef}
         />
       ))}
+
+      {/* Attribution section */}
+      <section
+        className="escape-section"
+        style={{
+          background: '#07070E',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 24,
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "'Cormorant Garamond', serif",
+            fontStyle: 'italic',
+            fontWeight: 300,
+            fontSize: 'clamp(20px, 3vw, 32px)',
+            letterSpacing: '0.08em',
+            color: 'hsla(38, 15%, 55%, 0.3)',
+          }}
+        >
+          One Minute Escapes
+        </span>
+        <span
+          style={{
+            fontFamily: "'Cormorant Garamond', serif",
+            fontStyle: 'italic',
+            fontWeight: 300,
+            fontSize: 14,
+            letterSpacing: '0.06em',
+            color: 'hsla(38, 15%, 55%, 0.2)',
+          }}
+        >
+          by jerrysoer &times; Claude
+        </span>
+        <a
+          href="https://github.com/jerrysoer/one-minute-escapes"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            fontFamily: "'Cormorant Garamond', serif",
+            fontStyle: 'italic',
+            fontWeight: 300,
+            fontSize: 13,
+            color: 'hsla(38, 15%, 55%, 0.15)',
+            textDecoration: 'none',
+            marginTop: 20,
+          }}
+        >
+          &darr;
+        </a>
+      </section>
+
+      {/* Delayed title overlay — appears after first cycle completes */}
+      {showDelayedTitle && activeConfig && (
+        <div
+          key={`title-${activeConfig.id}-${currentCycle}`}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            zIndex: 200,
+            animation: 'titleReveal 3s ease forwards',
+          }}
+        >
+          <span
+            style={{
+              fontFamily: `'${activeConfig.font.family}', ${activeConfig.font.fallback}`,
+              fontWeight: activeConfig.font.weight,
+              fontStyle: activeConfig.font.style,
+              fontSize: 'clamp(28px, 5vw, 44px)',
+              letterSpacing: '0.08em',
+              color: activeConfig.palette.accent,
+              textShadow: '0 0 60px rgba(0,0,0,0.9)',
+            }}
+          >
+            {activeConfig.title}
+          </span>
+        </div>
+      )}
 
       {/* Position dots */}
       <div
@@ -125,7 +248,7 @@ export default function App() {
           <button
             key={e.id}
             onClick={() => scrollToEscape(i)}
-            aria-label={`Go to ${e.title}`}
+            aria-label={`Go to escape ${i + 1}`}
             style={{
               width: i === activeIndex ? 8 : 6,
               height: i === activeIndex ? 8 : 6,
@@ -141,7 +264,7 @@ export default function App() {
         ))}
       </div>
 
-      {/* Scroll hint — first escape only, disappears after first scroll */}
+      {/* Cryptic scroll hint — minimal animated gesture, no text */}
       {!hasScrolled && (
         <div
           style={{
@@ -152,42 +275,61 @@ export default function App() {
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: 8,
             zIndex: 100,
-            opacity: 0.5,
-            animation: 'pulse 2s ease-in-out infinite',
+            opacity: 0.35,
+            animation: 'scrollGesture 2.5s ease-in-out infinite',
           }}
         >
-          <span
-            style={{
-              fontFamily: "'Cormorant Garamond', serif",
-              fontStyle: 'italic',
-              fontWeight: 300,
-              fontSize: 11,
-              letterSpacing: '0.08em',
-              color: 'hsla(38, 20%, 65%, 0.5)',
-            }}
-          >
-            scroll to explore
-          </span>
-          <svg width="12" height="8" viewBox="0 0 12 8" style={{ opacity: 0.4 }}>
-            <path d="M1 1L6 6L11 1" stroke="hsla(38, 20%, 65%, 0.5)" strokeWidth="1.5" fill="none" />
+          <svg width="20" height="32" viewBox="0 0 20 32" fill="none">
+            <rect x="1" y="1" width="18" height="30" rx="9" stroke="hsla(38, 20%, 65%, 0.5)" strokeWidth="1.2" fill="none" />
+            <circle cx="10" cy="10" r="2" fill="hsla(38, 20%, 65%, 0.4)">
+              <animate attributeName="cy" values="10;20;10" dur="2.5s" repeatCount="indefinite" />
+            </circle>
           </svg>
         </div>
       )}
 
-      {/* Timer arc */}
-      <TimerArc progress={timerDisplay.progress} elapsed={timerDisplay.elapsed} />
+      {/* Timer arc with per-escape color */}
+      <TimerArc
+        progress={timerDisplay.progress}
+        elapsed={timerDisplay.elapsed}
+        color={activeConfig?.timerColor}
+      />
 
-      {/* Share button — appears after 2+ escapes viewed */}
+      {/* Cycle counter */}
+      {currentCycle >= 2 && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 28,
+            right: 116,
+            zIndex: 100,
+            fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+            fontSize: 10,
+            color: 'hsla(38, 15%, 55%, 0.25)',
+            letterSpacing: '0.02em',
+            pointerEvents: 'none',
+          }}
+        >
+          &times;{currentCycle + 1}
+        </div>
+      )}
+
+      {/* Share button */}
       {viewedEscapes.size >= 2 && (
-        <ShareButton activeEscape={escapes[activeIndex]} />
+        <ShareButton activeEscape={activeConfig} />
       )}
 
       <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 0.5; transform: translateX(-50%) translateY(0); }
-          50% { opacity: 0.3; transform: translateX(-50%) translateY(4px); }
+        @keyframes scrollGesture {
+          0%, 100% { opacity: 0.35; transform: translateX(-50%) translateY(0); }
+          50% { opacity: 0.2; transform: translateX(-50%) translateY(6px); }
+        }
+        @keyframes titleReveal {
+          0% { opacity: 0; }
+          15% { opacity: 1; }
+          75% { opacity: 1; }
+          100% { opacity: 0; }
         }
       `}</style>
     </div>
@@ -198,8 +340,8 @@ function ShareButton({ activeEscape }) {
   const [copied, setCopied] = useState(false);
 
   const handleShare = () => {
-    const text = `I've been scrolling through One Minute Escapes. "${activeEscape.title}" has me stuck.\n→ https://jerrysoer.github.io/one-minute-escapes/#${activeEscape.id}`;
-    navigator.clipboard.writeText(text).then(() => {
+    const url = `https://jerrysoer.github.io/one-minute-escapes/?escape=${activeEscape.id}`;
+    navigator.clipboard.writeText(url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });

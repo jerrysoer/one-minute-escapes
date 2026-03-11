@@ -1,12 +1,11 @@
-import { useRef, useEffect, useState } from 'react';
-
 const SIZE = 80;
 const STROKE = 2;
 const RADIUS = (SIZE - STROKE * 2) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-export default function TimerArc({ progress, elapsed }) {
+export default function TimerArc({ progress, elapsed, color }) {
   const offset = CIRCUMFERENCE * (1 - progress);
+  const fillColor = color || 'hsla(38, 30%, 75%, 0.5)';
 
   return (
     <div
@@ -22,7 +21,6 @@ export default function TimerArc({ progress, elapsed }) {
       }}
     >
       <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
-        {/* Track */}
         <circle
           cx={SIZE / 2}
           cy={SIZE / 2}
@@ -31,22 +29,20 @@ export default function TimerArc({ progress, elapsed }) {
           stroke="hsla(38, 15%, 50%, 0.12)"
           strokeWidth={STROKE}
         />
-        {/* Progress */}
         <circle
           cx={SIZE / 2}
           cy={SIZE / 2}
           r={RADIUS}
           fill="none"
-          stroke="hsla(38, 30%, 75%, 0.5)"
+          stroke={fillColor}
           strokeWidth={STROKE}
           strokeDasharray={CIRCUMFERENCE}
           strokeDashoffset={offset}
           strokeLinecap="round"
           transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
-          style={{ transition: 'stroke-dashoffset 0.1s linear' }}
+          style={{ transition: 'stroke-dashoffset 0.1s linear, stroke 0.5s ease' }}
         />
       </svg>
-      {/* Timer number */}
       <span
         style={{
           position: 'absolute',

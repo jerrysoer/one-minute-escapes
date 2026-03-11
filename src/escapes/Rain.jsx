@@ -1,6 +1,8 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useCanvas } from '../hooks/useCanvas';
 import { useTimer } from '../hooks/useTimer';
+import { applyPixelGlitch } from '../utils/glitch';
+import { doubleTap } from '../utils/haptic';
 import { lerp, clamp, seededRandom, dist, TAU } from '../utils/math';
 
 const MAX_DROPS = 200;
@@ -36,10 +38,12 @@ function createDrop(rng, w, h) {
   };
 }
 
-export default function Rain({ isVisible, title, subtitle, onTimerUpdate }) {
+export default function Rain({ isVisible, title, onTimerUpdate, onCycleChange }) {
   const stateRef = useRef(null);
+  const prevCycleRef = useRef(null);
   const mouseRef = useRef({ x: -1, y: -1 });
   const sizeRef = useRef({ w: 0, h: 0 });
+  const _tRef = useRef({ taps: [], obj: null, cooldown: 0 });
   const { tick, restart } = useTimer();
 
   const initState = useCallback((w, h, seed) => {
@@ -71,6 +75,12 @@ export default function Rain({ isVisible, title, subtitle, onTimerUpdate }) {
       const timer = tick(dt);
       const { progress, phase, cycle, resetProgress } = timer;
       if (onTimerUpdate) onTimerUpdate(progress, timer.elapsed);
+
+      // Cycle change detection
+      if (prevCycleRef.current !== null && prevCycleRef.current !== cycle) {
+        if (onCycleChange) onCycleChange(cycle);
+      }
+      prevCycleRef.current = cycle;
       const state = stateRef.current;
       if (!state) return;
 
@@ -167,6 +177,7 @@ export default function Rain({ isVisible, title, subtitle, onTimerUpdate }) {
             a.opacity = Math.min(0.8, a.opacity + 0.05);
             a.stuck = false;
             b.merged = true;
+            if (a.radius > 4) doubleTap();
           }
         }
       }
@@ -226,30 +237,42 @@ export default function Rain({ isVisible, title, subtitle, onTimerUpdate }) {
         ctx.fill();
       }
 
-      // Title overlay (first cycle, intro phase)
-      if (timer.cycle === 0 && phase === 'intro') {
-        const titleAlpha = clamp(1 - (timer.elapsed - 1.5), 0, 1);
-        if (titleAlpha > 0) {
-          ctx.save();
-          ctx.globalAlpha = titleAlpha;
-          ctx.fillStyle = 'hsla(38, 30%, 85%, 0.9)';
-          ctx.font = 'italic 300 42px "Cormorant Garamond", serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(title, w / 2, h / 2 - 20);
-
-          ctx.fillStyle = 'hsla(38, 20%, 65%, 0.5)';
-          ctx.font = 'italic 300 16px "Cormorant Garamond", serif';
-          ctx.fillText(subtitle, w / 2, h / 2 + 20);
-          ctx.restore();
-        }
+      // _t update
+      const _t = _tRef.current;
+      if (_t.cooldown > 0) _t.cooldown -= dt;
+      if (_t.obj) {
+        const o = _t.obj;
+        o.vy += 40 * dt;
+        o.vy *= 0.97;
+        o.y += o.vy * dt;
+        o.phase += dt * 3.2;
+        const wx = o.x + Math.sin(o.phase) * 4;
+        // body
+        ctx.beginPath();
+        ctx.ellipse(wx, o.y, 5, 4, 0, 0, TAU);
+        ctx.fillStyle = 'hsla(45, 80%, 65%, 0.8)';
+        ctx.fill();
+        // head
+        ctx.beginPath();
+        ctx.arc(wx + 3.5, o.y - 3, 2.5, 0, TAU);
+        ctx.fill();
+        // beak
+        ctx.beginPath();
+        ctx.moveTo(wx + 5.5, o.y - 3);
+        ctx.lineTo(wx + 8, o.y - 2.5);
+        ctx.lineTo(wx + 5.5, o.y - 2);
+        ctx.fillStyle = 'hsla(25, 80%, 55%, 0.9)';
+        ctx.fill();
+        if (o.y > h + 20) _t.obj = null;
       }
 
       // Crossfade veil during reset
       if (phase === 'resetting') {
+        if (canvasRef.current) applyPixelGlitch(ctx, canvasRef.current, w, h, resetProgress);
         const veilAlpha = resetProgress < 0.5
           ? resetProgress * 2
           : 2 - resetProgress * 2;
-        ctx.fillStyle = `rgba(7, 7, 14, ${veilAlpha * 0.9})`;
+        ctx.fillStyle = `rgba(7, 10, 14, ${veilAlpha * 0.9})`;
         ctx.fillRect(0, 0, w, h);
       }
     },
@@ -278,14 +301,32 @@ export default function Rain({ isVisible, title, subtitle, onTimerUpdate }) {
       mouseRef.current = { x: -1, y: -1 };
     };
 
+    const _h = (e) => {
+      const now = performance.now();
+      const t = _tRef.current;
+      t.taps.push(now);
+      t.taps = t.taps.filter(ts => now - ts < 3000);
+      if (t.taps.length >= 7 && !t.obj && t.cooldown <= 0) {
+        const rect = canvas.getBoundingClientRect();
+        const cx = (e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : rect.width * 0.5)) - rect.left;
+        t.obj = { x: cx, y: -10, vy: 0, phase: 0 };
+        t.taps = [];
+        t.cooldown = 30;
+      }
+    };
+
     canvas.addEventListener('mousemove', handleMouse);
     canvas.addEventListener('touchmove', handleTouch, { passive: true });
     canvas.addEventListener('mouseleave', handleLeave);
+    canvas.addEventListener('click', _h);
+    canvas.addEventListener('touchend', _h);
 
     return () => {
       canvas.removeEventListener('mousemove', handleMouse);
       canvas.removeEventListener('touchmove', handleTouch);
       canvas.removeEventListener('mouseleave', handleLeave);
+      canvas.removeEventListener('click', _h);
+      canvas.removeEventListener('touchend', _h);
     };
   }, [canvasRef]);
 

@@ -3,6 +3,7 @@ import { useCanvas } from '../hooks/useCanvas';
 import { useTimer } from '../hooks/useTimer';
 import { lerp, clamp, easeInOutCubic, seededRandom, dist, mapRange, TAU } from '../utils/math';
 import { createNoise2D, fbm } from '../utils/noise';
+import { applyPixelGlitch } from '../utils/glitch';
 
 /* ───────── HSL color interpolation ───────── */
 function lerpHSL(h1, s1, l1, h2, s2, l2, t) {
@@ -117,7 +118,7 @@ function createBird(rng, cx, cy, index) {
 }
 
 /* ═════════════════════════════════════════════ */
-export default function Migration({ isVisible, title, subtitle, palette, onTimerUpdate }) {
+export default function Migration({ isVisible, title, palette, onTimerUpdate, onCycleChange }) {
   const timerRef = useRef(null);
   const { tick, restart, getState } = useTimer();
   timerRef.current = { tick, restart, getState };
@@ -135,7 +136,6 @@ export default function Migration({ isVisible, title, subtitle, palette, onTimer
     mouseX: 0.5,
     mouseY: 0.5,
     prevCycle: -1,
-    titleOpacity: 1,
   });
 
   // Mouse tracking
@@ -212,7 +212,6 @@ export default function Migration({ isVisible, title, subtitle, palette, onTimer
     }
 
     st.initialized = true;
-    st.titleOpacity = 1;
   }
 
   const canvasRef = useCanvas(
@@ -225,6 +224,7 @@ export default function Migration({ isVisible, title, subtitle, palette, onTimer
       // Re-init on first frame or new cycle
       if (!st.initialized || cycle !== st.prevCycle) {
         initScene(w, h, 42 + cycle * 137);
+        if (cycle !== st.prevCycle && onCycleChange) onCycleChange(cycle);
         st.prevCycle = cycle;
       }
 
@@ -608,46 +608,14 @@ export default function Migration({ isVisible, title, subtitle, palette, onTimer
       ctx.fillStyle = fogGrad;
       ctx.fillRect(0, 0, w, h);
 
-      // ═══════════ TITLE OVERLAY (intro phase, first cycle) ═══════════
-      if (phase === 'intro') {
-        st.titleOpacity = 1;
-      } else if (elapsed < 5) {
-        st.titleOpacity = clamp(mapRange(elapsed, 2.5, 4.5, 1, 0), 0, 1);
-      } else {
-        st.titleOpacity = 0;
-      }
-
-      if (st.titleOpacity > 0.01) {
-        const tAlpha = st.titleOpacity;
-        // Dark vignette behind text
-        const vigGrad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.5);
-        vigGrad.addColorStop(0, `hsla(220, 30%, 8%, ${tAlpha * 0.6})`);
-        vigGrad.addColorStop(1, `hsla(220, 30%, 8%, 0)`);
-        ctx.fillStyle = vigGrad;
-        ctx.fillRect(0, 0, w, h);
-
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        // Title
-        ctx.fillStyle = `hsla(38, 30%, 85%, ${tAlpha * 0.9})`;
-        ctx.font = 'italic 300 42px "Cormorant Garamond", serif';
-        ctx.letterSpacing = '0.08em';
-        ctx.fillText(title || 'Migration', w / 2, h / 2 - 16);
-
-        // Subtitle
-        ctx.fillStyle = `hsla(38, 20%, 65%, ${tAlpha * 0.5})`;
-        ctx.font = 'italic 300 16px "Cormorant Garamond", serif';
-        ctx.letterSpacing = '0.12em';
-        ctx.fillText(subtitle || 'winter fades \u00b7 spring arrives', w / 2, h / 2 + 22);
-      }
-
       // ═══════════ RESET CROSSFADE VEIL ═══════════
       if (phase === 'resetting') {
+        const canvas = canvasRef.current;
+        if (canvas) applyPixelGlitch(ctx, canvas, w, h, resetProgress);
         const veilAlpha = resetProgress < 0.5
           ? easeInOutCubic(resetProgress * 2)
           : easeInOutCubic(1 - (resetProgress - 0.5) * 2);
-        ctx.fillStyle = `hsla(220, 30%, 8%, ${veilAlpha * 0.95})`;
+        ctx.fillStyle = `rgba(7, 14, 10, ${veilAlpha * 0.95})`;
         ctx.fillRect(0, 0, w, h);
       }
 

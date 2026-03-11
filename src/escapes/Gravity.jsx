@@ -2,6 +2,8 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useCanvas } from '../hooks/useCanvas';
 import { useTimer } from '../hooks/useTimer';
 import { lerp, clamp, seededRandom, dist, TAU, easeInOutCubic } from '../utils/math';
+import { applyPixelGlitch } from '../utils/glitch';
+import { thump } from '../utils/haptic';
 
 const MAX_ORBS = 16;
 const TRAIL_LENGTH = 60;
@@ -45,9 +47,10 @@ function initOrbs(rng, w, h, count) {
   return orbs;
 }
 
-export default function Gravity({ isVisible, title, subtitle, onTimerUpdate }) {
+export default function Gravity({ isVisible, title, onTimerUpdate, onCycleChange }) {
   const stateRef = useRef(null);
   const sizeRef = useRef({ w: 0, h: 0 });
+  const prevCycleRef = useRef(-1);
   const { tick, restart } = useTimer();
 
   const initState = useCallback((w, h, seed) => {
@@ -110,6 +113,10 @@ export default function Gravity({ isVisible, title, subtitle, onTimerUpdate }) {
       const timer = tick(dt);
       const { progress, phase, cycle, resetProgress, elapsed } = timer;
       if (onTimerUpdate) onTimerUpdate(progress, elapsed);
+      if (cycle !== prevCycleRef.current) {
+        prevCycleRef.current = cycle;
+        if (onCycleChange) onCycleChange(cycle);
+      }
       const state = stateRef.current;
       if (!state) return;
 
@@ -194,6 +201,7 @@ export default function Gravity({ isVisible, title, subtitle, onTimerUpdate }) {
             // Blend hues
             a.hue = (a.hue + b.hue) / 2;
             b.alive = false;
+            thump();
 
             // Flash effect
             state.flashes.push({
@@ -259,25 +267,9 @@ export default function Gravity({ isVisible, title, subtitle, onTimerUpdate }) {
         ctx.fill();
       }
 
-      // Title overlay
-      if (cycle === 0 && phase === 'intro') {
-        const titleAlpha = clamp(1 - (elapsed - 1.5), 0, 1);
-        if (titleAlpha > 0) {
-          ctx.save();
-          ctx.globalAlpha = titleAlpha;
-          ctx.fillStyle = 'hsla(38, 30%, 85%, 0.9)';
-          ctx.font = 'italic 300 42px "Cormorant Garamond", serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(title, w / 2, h / 2 - 20);
-          ctx.fillStyle = 'hsla(38, 20%, 65%, 0.5)';
-          ctx.font = 'italic 300 16px "Cormorant Garamond", serif';
-          ctx.fillText(subtitle, w / 2, h / 2 + 20);
-          ctx.restore();
-        }
-      }
-
       // Crossfade veil
       if (phase === 'resetting') {
+        if (canvasRef.current) applyPixelGlitch(ctx, canvasRef.current, w, h, resetProgress);
         const veilAlpha = resetProgress < 0.5
           ? resetProgress * 2
           : 2 - resetProgress * 2;
